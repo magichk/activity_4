@@ -3,11 +3,12 @@
 from io import BytesIO
 from uuid import uuid4
 
-import httpx
+import boto3
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader, PdfWriter
 
+from app.config import settings
 from app.main import app
 
 PASSWORD = "contrasena1"
@@ -59,11 +60,24 @@ def upload(client: TestClient, headers: dict, name: str, pages: int) -> int:
     return file_id
 
 
-def download(url: str) -> bytes:
-    """La URL de descarga es prefirmada y apunta directamente a S3, no a esta API."""
-    response = httpx.get(url)
-    response.raise_for_status()
-    return response.content
+def read_content(file_id: int) -> bytes:
+    """Lee el contenido tal cual lo dejo la API en S3.
+
+    La URL de descarga que expone la API esta firmada contra el endpoint publico
+    (pensado para un cliente externo, como un navegador en el host). Estos tests corren
+    dentro de la red de docker, donde ese endpoint publico no es alcanzable, asi que se
+    lee el objeto con el mismo endpoint interno que usa la propia aplicacion. Lo que
+    valida el test es que download_url no sea nulo (contrato de la API) y que el
+    contenido que hay realmente en S3 sea el esperado.
+    """
+    client = boto3.client(
+        "s3",
+        endpoint_url=settings.s3_endpoint_url,
+        aws_access_key_id=settings.s3_access_key,
+        aws_secret_access_key=settings.s3_secret_key,
+        region_name=settings.s3_region,
+    )
+    return client.get_object(Bucket=settings.s3_bucket, Key=f"files/{file_id}")["Body"].read()
 
 
 def test_el_registro_asigna_identificadores_externos_distintos(client):
@@ -126,7 +140,7 @@ def test_ciclo_completo_de_un_fichero(client):
     filled = client.get(f"/files/{file_id}", headers=headers).json()
     assert filled["has_content"] is True
     assert filled["download_url"] is not None
-    assert len(PdfReader(BytesIO(download(filled["download_url"]))).pages) == 1
+    assert len(PdfReader(BytesIO(read_content(file_id))).pages) == 1
 
     assert [f["id"] for f in client.get("/files", headers=headers).json()] == [file_id]
     assert client.delete(f"/files/{file_id}", headers=headers).status_code == 200
@@ -150,8 +164,9 @@ def test_merge_suma_las_paginas_de_todos_los_pdfs(client):
 
     merged_id = client.post("/files/merge", json={"file_ids": ids}, headers=headers).json()["id"]
 
-    download_url = client.get(f"/files/{merged_id}", headers=headers).json()["download_url"]
-    assert len(PdfReader(BytesIO(download(download_url))).pages) == 6
+    merged = client.get(f"/files/{merged_id}", headers=headers).json()
+    assert merged["download_url"] is not None
+    assert len(PdfReader(BytesIO(read_content(merged_id))).pages) == 6
 
 
 def test_merge_falla_si_algun_fichero_no_tiene_contenido(client):
