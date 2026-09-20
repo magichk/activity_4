@@ -1,0 +1,31 @@
+name: Publish to Docker Hub
+
+# Construye la imagen de produccion y la sube a Docker Hub cuando se hace push a main.
+# Necesita dos secrets configurados en el repositorio (Settings > Secrets and variables > Actions):
+#   DOCKERHUB_USERNAME  -> tu usuario de Docker Hub
+#   DOCKERHUB_TOKEN     -> un access token generado en Docker Hub (no la contrasena)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Entrar en Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Construir y publicar la imagen de produccion
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: production
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/activity-4-api:latest

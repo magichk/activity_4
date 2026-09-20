@@ -1,0 +1,27 @@
+name: Format check
+
+# Comprueba el formato (black + ruff) en cada pull request, tal y como pide el enunciado.
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar black y ruff
+        run: pip install black==24.1.0 ruff==0.1.14
+
+      - name: Comprobar formato con black
+        run: black --config .black --check .
+
+      - name: Comprobar estilo con ruff
+        run: ruff check .

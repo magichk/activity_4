@@ -1,0 +1,125 @@
+services:
+  db:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-01-16T16-07-38Z
+    command: server /data --console-address ":9001"
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      target: production
+    image: activity-4-api:latest
+    env_file:
+      - .env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api-dev:
+    build:
+      context: .
+      target: development
+    env_file:
+      - .env
+    volumes:
+      - .:/srv/app
+    ports:
+      - "${API_DEV_PORT:-8001}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    profiles:
+      - dev
+
+  make_migrations:
+    build:
+      context: .
+      target: development
+    env_file:
+      - .env
+    volumes:
+      - .:/srv/app
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: aerich migrate
+    profiles:
+      - tools
+
+  migrate:
+    build:
+      context: .
+      target: development
+    env_file:
+      - .env
+    volumes:
+      - .:/srv/app
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: aerich upgrade
+    profiles:
+      - tools
+
+  format:
+    build:
+      context: .
+      target: formatter
+    volumes:
+      - .:/srv/app
+    entrypoint: sh -c "black --config .black . && ruff check --fix"
+    profiles:
+      - tools
+
+volumes:
+  postgres-data:
+  minio-data:
